@@ -2,8 +2,10 @@
 # See copyright, etc in below POD section.
 ######################################################################
 
-use Getopt::Long;
 use Cwd;
+use File::Path;
+use File::Spec;
+use Getopt::Long;
 use IO::File;
 use Pod::Usage;
 use strict;
@@ -12,6 +14,7 @@ use vars qw($Debug);
 #======================================================================
 # main
 
+our $Opt_CMake = 0;
 our $Opt_Stage = 0;
 our $Opt_Jobs = calc_jobs();
 
@@ -21,8 +24,10 @@ Getopt::Long::config("no_auto_abbrev");
 if (! GetOptions(
           "debug"       => sub { $Debug = 1; },
           "<>"          => sub { die "%Error: Unknown parameter: $_[0]\n"; },
+          "cmake"       => sub { $Opt_CMake = 1; },
           "stage=i"     => \$Opt_Stage,
           "j=i"         => \$Opt_Jobs,
+          "help"        => sub { Pod::Usage::pod2usage(0); },
     )) {
     die "%Error: Bad usage, try 'install_test --help'\n";
 }
@@ -33,64 +38,94 @@ exit(0);
 #######################################################################
 
 sub test {
-    -r "nodist/install_test" or die "%Error: Run from the top of the verilator kit,";
+    getcwd =~ / / and die "%Error: Paths with spaces are not supported\n";
+      # That's because we don't escape any shell arguments.
+
+    if ($^O eq "MSWin32" && !$Opt_CMake) {
+        warn "%Warning: Non-Cygwin Windows builds require cmake. Assuming -cmake option now.\n";
+        $Opt_CMake = 1;
+    }
+
+    -r "nodist/install_test" or die "%Error: Run from the top of the verilator kit\n";
 
     cleanenv();
-    run("make distclean") if -r "Makefile";
+    run("make distclean") if -r "Makefile" and !$Opt_CMake;
 
     # Try building from a scratch area
     my $srcdir = getcwd();
-    my $blddir  = $srcdir."/test_regress/obj_dir/install_test_bld";
-    my $prefix  = $srcdir."/test_regress/obj_dir/install_test_prefix";
-    my $testdirp= $srcdir."/test_regress/obj_dir/install_test_testp";
-    my $testdirn= $srcdir."/test_regress/obj_dir/install_test_testn";
+    my $blddir  = "$srcdir/test_regress/obj_dir/install_test_bld";
+    my $prefix  = "$srcdir/test_regress/obj_dir/install_test_prefix";
+    my $testdirp= "$srcdir/test_regress/obj_dir/install_test_testp";
+    my $testdirn= "$srcdir/test_regress/obj_dir/install_test_testn";
 
+    my $configcmd = $Opt_CMake ?
+        "cmake -G Ninja -S . -B $blddir -DCMAKE_INSTALL_PREFIX:PATH=$prefix -DCMAKE_UNITY_BUILD=TRUE" :
+        "cd $blddir && $srcdir/configure --prefix $prefix";
+    my $buildcmd = $Opt_CMake ?
+        "cmake --build $blddir -- -j $Opt_Jobs" :
+        "cd $blddir && make -j $Opt_Jobs";
+    my $installcmd = $Opt_CMake ?
+        "cmake --install $blddir" :
+        "cd $blddir && make install";
+
+    # Do a unity build
     if ($Opt_Stage <= 0) {
-        run("/bin/rm -rf $blddir");
-        run("/bin/mkdir -p $blddir");
-        run("cd $blddir && $srcdir/configure --prefix $prefix");
-        run("cd $blddir && make -j $Opt_Jobs");
+        v_rmtree($blddir);
+        v_mkpath($blddir) if !$Opt_CMake; # CMake builds create their output directory if needed
+        run($configcmd);
+        run($buildcmd);
     }
 
     # Install it under the prefix
     if ($Opt_Stage <= 1) {
-        run("/bin/rm -rf $prefix");
-        run("/bin/mkdir -p $prefix");
-        run("cd $blddir && make install");
-        run("test -e $prefix/share/man/man1/verilator.1");
-        run("test -e $prefix/share/verilator/examples/make_tracing_c/Makefile");
-        run("test -e $prefix/share/verilator/include/verilated.h");
-        run("test -e $prefix/bin/verilator");
-        run("test -e $prefix/bin/verilator_bin");
-        run("test -e $prefix/bin/verilator_bin_dbg");
-        run("test -e $prefix/bin/verilator_gantt");
-        run("test -e $prefix/bin/verilator_profcfunc");
+        v_rmtree($prefix);
+        v_mkpath($prefix);
+        run($installcmd);
+        v_test_e("$prefix/share/man/man1/verilator.1");
+        v_test_e("$prefix/share/verilator/examples/make_tracing_c/Makefile");
+        v_test_e("$prefix/share/verilator/include/verilated.h");
+        v_test_e("$prefix/bin/verilator");
+        v_test_e("$prefix/bin/verilator_bin");
+        v_test_e("$prefix/bin/verilator_bin_dbg");
+        v_test_e("$prefix/bin/verilator_gantt");
+        v_test_e("$prefix/bin/verilator_profcfunc");
     }
 
     # Run a test using just the path
     if ($Opt_Stage <= 2) {
         my $dir = $testdirp;
-        run("/bin/rm -rf   $dir");
-        run("/bin/mkdir -p $dir");
-        my $bin1 = $prefix."/bin";
-        my $bin2 = $prefix."/share/bin";
-        write_verilog($dir);
-        run("cd $dir && PATH=$bin1:$bin2:\$PATH verilator --cc foo.v --exe foo.cpp");
-        run("cd $dir/obj_dir && PATH=$bin1:$bin2:\$PATH make -f Vfoo.mk");
-        run("cd $dir && PATH=$bin1:$bin2:\$PATH obj_dir/Vfoo");
+        v_rmtree($dir);
+        v_mkpath($dir);
+        write_verilog($prefix, $dir);
+        my $makesel = $Opt_CMake ? "cmake" : "gmake";
+        my $build = $Opt_CMake ? "cmake --build ." : "make -f Vfoo.mk";
+        my $bin1 = File::Spec->canonpath("$prefix/bin");
+        my $bin2 = File::Spec->canonpath("$prefix/share/bin");
+        my $setpath = ($^O eq "MSWin32") ?
+            "(PATH $bin1;$bin2;%PATH%) &&" :
+            "PATH=$bin1:$bin2:\$PATH";
+        my $obj_dir = File::Spec->canonpath("$dir/obj_dir");
+        $dir = File::Spec->canonpath($dir);
+        run("cd $dir && $setpath verilator --make $makesel --cc foo.v --exe foo.cpp");
+        run("cd $obj_dir && $setpath $build");
+        run("cd $dir && $setpath obj_dir/Vfoo");
     }
 
     # Run a test using exact path to binary
     if ($Opt_Stage <= 3) {
         my $dir = $testdirn;
-        run("/bin/rm -rf   $dir");
-        run("/bin/mkdir -p $dir");
-        write_verilog($dir);
-        my $bin1 = $prefix."/bin";
-        my $bin2 = $prefix."/share/bin";
-        run("cd $dir && $bin1/verilator --cc foo.v --exe foo.cpp");
-        run("cd $dir/obj_dir && make -f Vfoo.mk");
-        run("cd $dir/obj_dir && ./Vfoo");
+        v_rmtree($dir);
+        v_mkpath($dir);
+        write_verilog($prefix, $dir);
+        my $makesel = $Opt_CMake ? "cmake" : "gmake";
+        my $build = $Opt_CMake ? "cmake --build ." : "make -f Vfoo.mk";
+        my $verilator = File::Spec->canonpath("$prefix/bin/verilator");
+        my $obj_dir = File::Spec->canonpath("$dir/obj_dir");
+        my $make_opt = $Opt_CMake ? "--make cmake" : "";
+        $dir = File::Spec->canonpath($dir);
+        run("cd $dir && $verilator --make $makesel --cc foo.v --exe foo.cpp");
+        run("cd $obj_dir && $build");
+        run("cd $obj_dir && ./Vfoo");
     }
 
     if ($Opt_Stage <= 9) {
@@ -99,23 +134,44 @@ sub test {
 }
 
 sub write_verilog {
+    my $prefix = shift;
     my $dir = shift;
     IO::File->new(">$dir/foo.v")->print('module t; initial begin $display("HELLO WORLD"); $finish; end endmodule'."\n");
-    my $fh = IO::File->new(">$dir/foo.cpp");
-    $fh->print('#include "Vfoo.h"'              ,"\n");
-    $fh->print('unsigned int main_time = 0;'    ,"\n");
-    $fh->print('double sc_time_stamp() {'       ,"\n");
-    $fh->print('    return main_time;'          ,"\n");
-    $fh->print('}'                              ,"\n");
-    $fh->print('int main() {'                   ,"\n");
-    $fh->print('    Vfoo *top = new Vfoo;'      ,"\n");
-    $fh->print('    while (!Verilated::gotFinish()) {',"\n");
-    $fh->print('        top->eval();'           ,"\n");
-    $fh->print('        main_time++;'           ,"\n");
-    $fh->print('    }'                          ,"\n");
-    $fh->print('    top->final();'              ,"\n");
-    $fh->print('}'                              ,"\n");
+
+    IO::File->new(">$dir/foo.cpp")->print(<<'END_CPP');
+#include "Vfoo.h"
+unsigned int main_time = 0;
+double sc_time_stamp() {
+    return main_time;
 }
+int main() {
+    Vfoo *top = new Vfoo;
+    while (!Verilated::gotFinish()) {
+        top->eval();
+        main_time++;
+    }
+    top->final();
+}
+END_CPP
+
+    IO::File->new(">$dir/CMakeLists.txt")->print(<<"END_CMAKELISTS");
+cmake_minimum_required(VERSION 3.15)
+project(Vfoo)
+
+find_package(verilator HINTS "$prefix")
+if (NOT verilator_FOUND)
+    message(FATAL_ERROR "Verilator was not found in $prefix.")
+endif()
+
+add_executable(Vfoo foo.cpp)
+
+# Add the Verilated circuit to the target
+verilate(Vfoo
+    INCLUDE_DIRS "."
+    SOURCES foo.v)
+)
+END_CMAKELISTS
+}    
 
 sub cleanenv {
     foreach my $var (keys %ENV) {
@@ -146,7 +202,37 @@ sub run {
     print "\t$command\n";
     system "$command";
     my $status = $?;
-    ($status == 0) or die "%Error: Command Failed $command, $status, stopped";
+    ($status == 0) or die "%Error: Command Failed $command, $status, stopped\n";
+}
+
+sub v_rmtree {
+    my $path = shift;
+    print "\tremoving tree $path\n";
+    File::Path::remove_tree($path, {error => \my $err});
+    check_patherr($err, "removing tree");
+}
+
+sub v_mkpath {
+    my $path = shift;
+    print "\tmaking directory $path\n";
+    File::Path::make_path($path, {error => \my $err});
+    check_patherr($err, "making directory");
+}
+
+sub v_test_e {
+    my $path = shift;
+    -e $path or die ("%Error: The expected path $path doesn't exist\n");
+}
+
+sub check_patherr {
+    # Checks the diagnostics from remove_tree and make_path
+    my ($err, $while) = @_;
+    if ($err && @$err) {
+        for my $diag (@$err) {
+            my ($file, $message) = %$diag;
+            die "%Error: $message (while $while $file)\n";
+        }
+    }
 }
 
 #######################################################################
@@ -164,9 +250,9 @@ install_test - Build and install Verilator several ways
 
 =head1 DESCRIPTION
 
-install_test performs several make-and-install iterations to verify the
-kit.  It isn't part of the normal "make test" due to the number of builds
-required.
+install_test performs several make-and-install iterations using the
+autoconf-based build system to verify the kit.  It isn't part of the
+normal "make test" due to the number of builds required.
 
 =head1 ARGUMENTS
 
@@ -175,6 +261,10 @@ required.
 =item --help
 
 Displays this message and program version and exits.
+
+=item -cmake
+
+Use cmake as the build system. The default is autoconf.
 
 =item -j I<jobs>
 
@@ -197,6 +287,7 @@ Version 2.0.
 =head1 AUTHORS
 
 Wilson Snyder <wsnyder@wsnyder.org>
+Kuba Ober <kuba@mareimbrium.org>
 
 =head1 SEE ALSO
 
