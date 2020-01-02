@@ -7,9 +7,17 @@ project(Verilator
     LANGUAGES CXX
 )
 
+option(CMAKE_UNITY_BUILD
+    "Builds concatenated source files, potentially sppeding up the build.")
+option(DEBUG_AND_RELEASE [[
+Builds both the debug and release binaries, overriding CMAKE_BUILD_TYPE.
+Not supported under MSBuild."]])
+
+set(CMAKE_INSTALL_DATADIR "${CMAKE_INSTALL_PREFIX}/share/verilator")
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 include(CheckStructHasMember)
+include(ExternalProject)
 
 if (WIN32)
     # Check for Chcocolatey winflexbison
@@ -29,4 +37,91 @@ check_struct_has_member("struct stat.st_mtim" tv_nsec sys/stat.h HAVE_STAT_NSEC 
 set(PACKAGE_NAME ${PROJECT_NAME})
 set(PACKAGE_VERSION ${PROJECT_VERSION})
 
-add_subdirectory(src)
+if (DEBUG_AND_RELEASE)
+    if (CMAKE_GENERATOR MATCHES "^Visual Studio ")
+        error("%Error: The DEBUG_AND_RELEASE option is not supported in MSBuild-based builds.")
+    endif()
+    set(CMAKE_BUILD_TYPE Debug)
+    add_subdirectory(src build-Debug)
+    set(CMAKE_BUILD_TYPE Release)
+    add_subdirectory(src build-Release)
+    set(CMAKE_BUILD_TYPE Coverage)
+    add_subdirectory(src build-Coverage)
+else()
+    add_subdirectory(src)
+endif()
+
+#
+# Configuration and Installation
+
+foreach (_file include/verilated.mk include/verilated_config.h verilator.pc)
+    configure_file(${_file}.in ${_file} @ONLY)
+endforeach()
+
+configure_package_config_file(verilator-config.cmake.in verilator-config.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_DATADIR}
+)
+
+configure_package_config_file(verilator-config-version.cmake.in verilator-config-version.cmake
+    INSTALL_DESTINATION ${CMAKE_INSTALL_DATADIR}
+)
+
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/verilator.pc DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/pkgconfig)
+
+add_custom_target(manfiles ALL)
+
+foreach (program
+    verilator
+    verilator_coverage
+    verilator_gantt
+    verilator_profcfunc
+)
+    set(output ${CMAKE_CURRENT_BINARY_DIR}/${program}.1)
+    install(PROGRAMS bin/${program} TYPE BIN)
+    install(FILES ${_output} DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
+
+    add_custom_command(
+        OUTPUT ${program}.1 MAIN_DEPENDENCY bin/${program}
+        COMMAND pod2man ARGS
+            "$<SHELL_PATH:${CMAKE_CURRENT_SOURCE_DIR}/bin/${program}>"
+            "$<SHELL_PATH:${CMAKE_CURRENT_BINARY_DIR}/${program}.1>"
+    )
+    add_custom_target(${program}_1 DEPENDS ${output})
+    add_dependencies(manfiles ${program}_1)
+endforeach()
+
+install(FILES bin/verilator_includer DESTINATION ${CMAKE_INSTALL_DATADIR}/bin)
+
+file(GLOB misc_installed LIST_DIRECTORIES FALSE
+    include/verilated_config.h
+    include/verilated.mk
+    include/*.[chv]
+    include/gtkwave/*.[chv]*
+    include/vltstd/*.[chv]*
+    examples/*/*.[chv]*
+    examples/*/Makefile*
+    examples/*/CMakeLists.txt
+)
+
+# FIXME This should use DIRECTORY for examples and includes
+install(FILES ${misc_installed} TYPE DATA)
+
+add_custom_target(info ALL)
+
+add_custom_command(
+    OUTPUT verilator.txt MAIN_DEPENDENCY bin/verilator
+    COMMAND pod2text ARGS
+        "$<SHELL_PATH:${CMAKE_CURRENT_SOURCE_DIR}/bin/verilator>"
+        "$<SHELL_PATH:${CMAKE_CURRENT_BINARY_DIR}/verilator.txt>"
+)
+add_custom_target(verilator_txt DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/verilator.txt)
+
+add_custom_command(
+    OUTPUT verilator.html MAIN_DEPENDENCY bin/verilator
+    COMMAND pod2html ARGS
+        --infile "$<SHELL_PATH:${CMAKE_CURRENT_SOURCE_DIR}/bin/verilator>"
+        --outfile "$<SHELL_PATH:${CMAKE_CURRENT_BINARY_DIR}/verilator.html>"
+)
+add_custom_target(verilator_html DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/verilator.html)
+
+add_dependencies(info verilator_txt verilator_html)

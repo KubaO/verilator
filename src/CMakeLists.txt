@@ -307,7 +307,7 @@ add_custom_command(
     COMMAND ${PERL_EXECUTABLE} ARGS
         ${FLEXFIX} V3Lexer < "$<SHELL_PATH:${FLEX_V3Lexer_pregen_OUTPUTS}>" > "$<SHELL_PATH:${FLEX_V3Lexer_OUTPUTS}>"
 )
-add_custom_target(V3Lexer_yy_cpp DEPENDS ${FLEX_V3Lexer_OUTPUTS})
+add_custom_target(V3Lexer_yy_cpp${CMAKE_BUILD_TYPE} DEPENDS ${FLEX_V3Lexer_OUTPUTS})
 # Output included by another source file
 
 set(FLEX_V3PreLex_pregen_OUTPUTS ${CMAKE_CURRENT_BINARY_DIR}/V3PreLex_pregen.yy.cpp)
@@ -328,7 +328,7 @@ add_custom_command(
     COMMAND ${PERL_EXECUTABLE} ARGS
         ${FLEXFIX} V3PreLex < "$<SHELL_PATH:${FLEX_V3PreLex_pregen_OUTPUTS}>" > "$<SHELL_PATH:${FLEX_V3PreLex_OUTPUTS}>"
 )
-add_custom_target(V3PreLex_yy_cpp DEPENDS ${FLEX_V3PreLex_OUTPUTS})
+add_custom_target(V3PreLex_yy_cpp${CMAKE_BUILD_TYPE} DEPENDS ${FLEX_V3PreLex_OUTPUTS})
 # Output included by another source file
 
 set(gitHead ${srcdir}/../.git/logs/HEAD)
@@ -369,7 +369,7 @@ addBuildType(DEBUG COVERAGE)
 # It is a custom_target, not custom_command, because vlcovgen.d is
 # a phony target (it doesn't exist as a file).
 add_custom_target(
-    vlcovgen.d
+    vlcovgen.d${CMAKE_BUILD_TYPE}
     DEPENDS ../include/verilated_cov_key.h ${VLCOVGEN}
     COMMENT "Updating include/verilated_cov_key.h"
     COMMAND ${PERL_EXECUTABLE}
@@ -379,13 +379,15 @@ add_custom_target(
 #
 # Set up the verilator binary target
 
-add_executable(verilator
+set(verilator verilator${CMAKE_BUILD_TYPE})
+
+add_executable(${verilator}
     $<$<NOT:$<CONFIG:COVERAGE>>:${COMMON_SOURCES}>
     $<$<NOT:$<CONFIG:COVERAGE>>:${GENERATED_FILES}>
-    $<$<CONFIG:COVERAGE>:${COVERAGE_SOURCES}>
+    $<$<CONFIG:COVERAGE>:${COVERAGE_SOURCES} config_rev.h>
 )
 
-set_target_properties(verilator PROPERTIES
+set_target_properties(${verilator} PROPERTIES
     OUTPUT_NAME_RELEASE   verilator_bin
     OUTPUT_NAME_DEBUG     verilator_bin_dbg
     OUTPUT_NAME_COVERAGE  verilator_coverage_bin_dbg
@@ -394,27 +396,27 @@ set_target_properties(verilator PROPERTIES
     INTERPROCEDURAL_OPTIMIZATION_RELEASE  TRUE
 )
 
-add_dependencies(verilator
-    V3Lexer_yy_cpp
-    V3PreLex_yy_cpp
+add_dependencies(${verilator}
+    V3Lexer_yy_cpp${CMAKE_BUILD_TYPE}
+    V3PreLex_yy_cpp${CMAKE_BUILD_TYPE}
 )
 
 # verilated_cov_key.h is only regenerated in a single-configuration environment.
 # This limitation can be lifted when `add_dependencies` will support generator
 # expressions. See https://gitlab.kitware.com/cmake/cmake/issues/19467
 if (CMAKE_BUILD_TYPE STREQUAL Coverage)
-    add_dependencies(verilator vlcovgen.d)
+    add_dependencies(${verilator} vlcovgen.d${CMAKE_BUILD_TYPE})
 endif()
 
-target_compile_features(verilator PRIVATE cxx_std_11)
+target_compile_features(${verilator} PRIVATE cxx_std_11)
 
-target_compile_definitions(verilator PRIVATE
+target_compile_definitions(${verilator} PRIVATE
     YYDEBUG # Required to get nice error messages
     $<$<CONFIG:DEBUG>:VL_DEBUG>
     $<$<CONFIG:DEBUG>:_GLIBCXX_DEBUG>
 )
 
-target_include_directories(verilator
+target_include_directories(${verilator}
     PRIVATE
     ../include
     ${FLEX_INCLUDE_DIRS}
@@ -423,9 +425,11 @@ target_include_directories(verilator
 )
 
 if (WIN32)
-    target_compile_definitions(verilator PRIVATE
+    target_compile_definitions(${verilator} PRIVATE
         YY_NO_UNISTD_H
     )
-    target_include_directories(verilator PRIVATE ../platform/win32)
-    target_link_libraries(verilator PRIVATE bcrypt psapi)
+    target_include_directories(${verilator} PRIVATE ../platform/win32)
+    target_link_libraries(${verilator} PRIVATE bcrypt psapi)
 endif()
+
+install(TARGETS ${verilator})

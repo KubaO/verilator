@@ -38,7 +38,7 @@ exit(0);
 #######################################################################
 
 sub test {
-    getcwd =~ / / and die "%Error: Paths with spaces are not supported\n";
+    getcwd =~ / / and die "%Error: Paths with spaces are not supported.\n";
       # That's because we don't escape any shell arguments.
 
     if ($^O eq "MSWin32" && !$Opt_CMake) {
@@ -46,7 +46,7 @@ sub test {
         $Opt_CMake = 1;
     }
 
-    -r "nodist/install_test" or die "%Error: Run from the top of the verilator kit\n";
+    -r "nodist/install_test" or die "%Error: Run from the top of the verilator kit.\n";
 
     cleanenv();
     run("make distclean") if -r "Makefile" and !$Opt_CMake;
@@ -58,29 +58,38 @@ sub test {
     my $testdirp= "$srcdir/test_regress/obj_dir/install_test_testp";
     my $testdirn= "$srcdir/test_regress/obj_dir/install_test_testn";
 
-    my $configcmd = $Opt_CMake ?
-        "cmake -G Ninja -S . -B $blddir -DCMAKE_INSTALL_PREFIX:PATH=$prefix -DCMAKE_UNITY_BUILD=TRUE" :
-        "cd $blddir && $srcdir/configure --prefix $prefix";
-    my $buildcmd = $Opt_CMake ?
-        "cmake --build $blddir -- -j $Opt_Jobs" :
-        "cd $blddir && make -j $Opt_Jobs";
-    my $installcmd = $Opt_CMake ?
-        "cmake --install $blddir" :
-        "cd $blddir && make install";
+    my %cmd = $Opt_CMake ? (
+            config  => "cmake -G Ninja -S . -B $blddir -DCMAKE_INSTALL_PREFIX:PATH=$prefix -DCMAKE_UNITY_BUILD=ON -DDEBUG_AND_RELEASE=ON",
+            build   => "cmake --build $blddir -- -j $Opt_Jobs",
+            install => "cmake --install $blddir",
+        ) : (
+            config  => "cd $blddir && $srcdir/configure --prefix $prefix",
+            build   => "cd $blddir && make -j $Opt_Jobs",
+            install => "cd $blddir && make install",
+        );
 
-    # Do a unity build
+
+    # Wipe the build tree
     if ($Opt_Stage <= 0) {
         v_rmtree($blddir);
         v_mkpath($blddir) if !$Opt_CMake; # CMake builds create their output directory if needed
-        run($configcmd);
-        run($buildcmd);
+    }
+
+    # Configure a unity build
+    if ($Opt_Stage <= 1) {
+        run($cmd{config});
+    }
+
+    # Build
+    if ($Opt_Stage <= 2) {
+        run($cmd{build});
     }
 
     # Install it under the prefix
-    if ($Opt_Stage <= 1) {
+    if ($Opt_Stage <= 3) {
         v_rmtree($prefix);
         v_mkpath($prefix);
-        run($installcmd);
+        run($cmd{install});
         v_test_e("$prefix/share/man/man1/verilator.1");
         v_test_e("$prefix/share/verilator/examples/make_tracing_c/Makefile");
         v_test_e("$prefix/share/verilator/include/verilated.h");
@@ -92,7 +101,7 @@ sub test {
     }
 
     # Run a test using just the path
-    if ($Opt_Stage <= 2) {
+    if ($Opt_Stage <= 4) {
         my $dir = $testdirp;
         v_rmtree($dir);
         v_mkpath($dir);
@@ -112,7 +121,7 @@ sub test {
     }
 
     # Run a test using exact path to binary
-    if ($Opt_Stage <= 3) {
+    if ($Opt_Stage <= 5) {
         my $dir = $testdirn;
         v_rmtree($dir);
         v_mkpath($dir);
@@ -171,7 +180,7 @@ verilate(Vfoo
     SOURCES foo.v)
 )
 END_CMAKELISTS
-}    
+}
 
 sub cleanenv {
     foreach my $var (keys %ENV) {
