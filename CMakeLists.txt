@@ -9,7 +9,7 @@ project(Verilator
 
 option(CMAKE_UNITY_BUILD
     "Builds concatenated source files, potentially sppeding up the build.")
-option(DEBUG_AND_RELEASE [[
+option(DEBUG_AND_RELEASE_AND_COVERAGE [[
 Builds both the debug and release binaries, overriding CMAKE_BUILD_TYPE.
 Not supported under MSBuild."]])
 
@@ -34,25 +34,32 @@ find_package(FLEX)
 
 check_struct_has_member("struct stat.st_mtim" tv_nsec sys/stat.h HAVE_STAT_NSEC LANGUAGE CXX)
 
-set(PACKAGE_NAME ${PROJECT_NAME})
-set(PACKAGE_VERSION ${PROJECT_VERSION})
+#
+# Build
 
-if (DEBUG_AND_RELEASE)
+set_property(GLOBAL PROPERTY JOB_POOLS one_job=1)
+
+if (DEBUG_AND_RELEASE_AND_COVERAGE)
     if (CMAKE_GENERATOR MATCHES "^Visual Studio ")
-        error("%Error: The DEBUG_AND_RELEASE option is not supported in MSBuild-based builds.")
+        error("%Error: The DEBUG_AND_RELEASE_AND_COVERAGE option is not supported in MSBuild-based builds.")
     endif()
+    set(saved_build_type ${CMAKE_BUILD_TYPE})
     set(CMAKE_BUILD_TYPE Debug)
     add_subdirectory(src build-Debug)
     set(CMAKE_BUILD_TYPE Release)
     add_subdirectory(src build-Release)
     set(CMAKE_BUILD_TYPE Coverage)
     add_subdirectory(src build-Coverage)
+    set(CMAKE_BUILD_TYPE ${saved_build_type})
 else()
     add_subdirectory(src)
 endif()
 
 #
 # Configuration and Installation
+
+set(PACKAGE_NAME ${PROJECT_NAME})
+set(PACKAGE_VERSION ${PROJECT_VERSION})
 
 foreach (_file include/verilated.mk include/verilated_config.h verilator.pc)
     configure_file(${_file}.in ${_file} @ONLY)
@@ -78,7 +85,7 @@ foreach (program
 )
     set(output ${CMAKE_CURRENT_BINARY_DIR}/${program}.1)
     install(PROGRAMS bin/${program} TYPE BIN)
-    install(FILES ${_output} DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
+    install(FILES ${output} DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
 
     add_custom_command(
         OUTPUT ${program}.1 MAIN_DEPENDENCY bin/${program}
@@ -92,19 +99,19 @@ endforeach()
 
 install(FILES bin/verilator_includer DESTINATION ${CMAKE_INSTALL_DATADIR}/bin)
 
-file(GLOB misc_installed LIST_DIRECTORIES FALSE
-    include/verilated_config.h
-    include/verilated.mk
-    include/*.[chv]
-    include/gtkwave/*.[chv]*
-    include/vltstd/*.[chv]*
-    examples/*/*.[chv]*
-    examples/*/Makefile*
-    examples/*/CMakeLists.txt
+install(DIRECTORY examples TYPE DATA FILES_MATCHING
+    PATTERN "examples/*/*.[chv]*"
+    PATTERN "examples/*/Makefile*"
+    PATTERN "examples/*/CMakeLists.txt"
 )
 
-# FIXME This should use DIRECTORY for examples and includes
-install(FILES ${misc_installed} TYPE DATA)
+install(DIRECTORY include TYPE DATA FILES_MATCHING
+    PATTERN "include/verilated_config.h"
+    PATTERN "include/verilated.mk"
+    PATTERN "include/*.[chv]"
+    PATTERN "include/gtkwave/*.[chv]*"
+    PATTERN "include/vltstd/*.[chv]*"
+)
 
 add_custom_target(info ALL)
 
@@ -125,3 +132,9 @@ add_custom_command(
 add_custom_target(verilator_html DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/verilator.html)
 
 add_dependencies(info verilator_txt verilator_html)
+
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/verilator.txt
+    ${CMAKE_CURRENT_BINARY_DIR}/verilator.html
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/doc
+)

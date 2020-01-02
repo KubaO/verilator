@@ -53,13 +53,15 @@ sub test {
 
     # Try building from a scratch area
     my $srcdir = getcwd();
-    my $blddir  = "$srcdir/test_regress/obj_dir/install_test_bld";
-    my $prefix  = "$srcdir/test_regress/obj_dir/install_test_prefix";
-    my $testdirp= "$srcdir/test_regress/obj_dir/install_test_testp";
-    my $testdirn= "$srcdir/test_regress/obj_dir/install_test_testn";
+    my $blddir   = "$srcdir/test_regress/obj_dir/install_test_bld";
+    my $prefix   = "$srcdir/test_regress/obj_dir/install_test_prefix";
+    my $testdirp = "$srcdir/test_regress/obj_dir/install_test_testp";
+    my $testdirn = "$srcdir/test_regress/obj_dir/install_test_testn";
+
+    my $exesuffix = ($^O eq "MSWin32") ? ".exe" : "";
 
     my %cmd = $Opt_CMake ? (
-            config  => "cmake -G Ninja -S . -B $blddir -DCMAKE_INSTALL_PREFIX:PATH=$prefix -DCMAKE_UNITY_BUILD=ON -DDEBUG_AND_RELEASE=ON",
+            config  => "cmake -G Ninja -S . -B $blddir -DCMAKE_INSTALL_PREFIX:PATH=$prefix -DCMAKE_UNITY_BUILD=ON -DDEBUG_AND_RELEASE_AND_COVERAGE=ON",
             build   => "cmake --build $blddir -- -j $Opt_Jobs",
             install => "cmake --install $blddir",
         ) : (
@@ -94,8 +96,8 @@ sub test {
         v_test_e("$prefix/share/verilator/examples/make_tracing_c/Makefile");
         v_test_e("$prefix/share/verilator/include/verilated.h");
         v_test_e("$prefix/bin/verilator");
-        v_test_e("$prefix/bin/verilator_bin");
-        v_test_e("$prefix/bin/verilator_bin_dbg");
+        v_test_e("$prefix/bin/verilator_bin$exesuffix");
+        v_test_e("$prefix/bin/verilator_bin_dbg$exesuffix");
         v_test_e("$prefix/bin/verilator_gantt");
         v_test_e("$prefix/bin/verilator_profcfunc");
     }
@@ -196,10 +198,12 @@ sub cleanenv {
 #######################################################################
 
 sub calc_jobs {
-    my $ok = eval "
-        use Unix::Processors;
-        return Unix::Processors->new->max_online;
-    ";
+    my $ok = ($^O eq "MSWin32") ?
+        $ENV{NUMBER_OF_PROCESSORS} :
+        eval "
+            use Unix::Processors;
+            return Unix::Processors->new->max_online;
+        ";
     $ok && !$@ or return 1;
     print "driver.pl: Found $ok cores, using -j ",$ok+1,"\n" if $Debug;
     return $ok + 1;

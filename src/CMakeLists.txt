@@ -393,6 +393,7 @@ set_target_properties(${verilator} PROPERTIES
     OUTPUT_NAME_COVERAGE  verilator_coverage_bin_dbg
     #UNITY_BUILD $<IF:$<CONFIG:DEBUG>,FALSE,${CMAKE_UNITY_BUILD}>
     MSVC_RUNTIME_LIBRARY  MultiThreaded$<IF:$<CONFIG:Release>,,DebugDLL>
+    JOB_POOL_LINK         one_job      # Linking takes lots of resources
     INTERPROCEDURAL_OPTIMIZATION_RELEASE  TRUE
 )
 
